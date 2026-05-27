@@ -9,3 +9,5 @@ data/*.sqlite3-*
 data/generated/
 playwright-report/
 test-results/
+
+/data/resume.md
