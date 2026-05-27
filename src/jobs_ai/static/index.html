@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jobs AI</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">JA</div>
+          <div>
+            <h1>Jobs AI</h1>
+            <p>Application command center</p>
+          </div>
+        </div>
+
+        <section class="search-panel">
+          <label>
+            Search
+            <input id="queryInput" type="text" />
+          </label>
+          <label>
+            Location
+            <input id="locationInput" type="text" />
+          </label>
+          <label>
+            Limit
+            <input id="limitInput" type="number" min="1" max="100" />
+          </label>
+          <button id="searchButton" class="primary">Search Jobs</button>
+        </section>
+
+        <section class="resume-panel">
+          <div class="panel-heading">
+            <h2>Resume Source</h2>
+            <span id="resumePath"></span>
+          </div>
+          <div id="cvDocuments" class="cv-documents"></div>
+          <textarea id="resumeEditor" spellcheck="true"></textarea>
+          <button id="saveResumeButton">Save Resume</button>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div class="stat">
+            <span id="totalJobs">0</span>
+            <small>Discovered</small>
+          </div>
+          <div class="stat">
+            <span id="submittedApps">0</span>
+            <small>Submitted</small>
+          </div>
+          <div class="stat">
+            <span id="reviewRequired">0</span>
+            <small>Review</small>
+          </div>
+          <div class="stat">
+            <span id="failedApps">0</span>
+            <small>Failed</small>
+          </div>
+          <div class="settings-pill" id="settingsPill"></div>
+        </header>
+
+        <div class="content-grid">
+          <section class="jobs-pane">
+            <div class="section-title">
+              <h2>Discovered Jobs</h2>
+              <span id="jobCount">0 roles</span>
+            </div>
+            <div id="jobsList" class="jobs-list"></div>
+          </section>
+
+          <section class="detail-pane">
+            <div id="emptyState" class="empty-state">
+              <h2>Select a job</h2>
+              <p>Search for roles, then inspect details, generate a tailored resume, and review the application packet.</p>
+            </div>
+
+            <article id="jobDetail" class="job-detail hidden">
+              <div class="detail-header">
+                <div>
+                  <span id="detailStatus" class="status"></span>
+                  <h2 id="detailTitle"></h2>
+                  <p id="detailMeta"></p>
+                  <p id="detailPrefs"></p>
+                </div>
+                <a id="detailUrl" class="link-button" target="_blank" rel="noreferrer">Open Posting</a>
+              </div>
+
+              <div class="actions">
+                <button id="analyzeButton" class="primary">Analyze & Tailor</button>
+                <button id="submitButton">Submit / Mark Reviewed</button>
+                <button id="skipButton" class="quiet">Skip</button>
+              </div>
+
+              <div class="tabs">
+                <button class="tab active" data-tab="overview">Overview</button>
+                <button class="tab" data-tab="resume">Resume</button>
+                <button class="tab" data-tab="answers">Answers</button>
+                <button class="tab" data-tab="description">Description</button>
+                <button class="tab" data-tab="logs">Logs</button>
+              </div>
+
+              <section id="tab-overview" class="tab-panel">
+                <div class="match-row">
+                  <div class="score-ring"><span id="matchScore">-</span></div>
+                  <div>
+                    <h3>Match Analysis</h3>
+                    <p id="matchSummary">Analyze this role to generate match details.</p>
+                  </div>
+                </div>
+                <h3>Key Requirements</h3>
+                <p id="selectedResume"></p>
+                <ul id="requirementsList"></ul>
+              </section>
+
+              <section id="tab-resume" class="tab-panel hidden">
+                <pre id="tailoredResume"></pre>
+              </section>
+
+              <section id="tab-answers" class="tab-panel hidden">
+                <div id="answersList" class="answers-list"></div>
+              </section>
+
+              <section id="tab-description" class="tab-panel hidden">
+                <pre id="jobDescription"></pre>
+              </section>
+
+              <section id="tab-logs" class="tab-panel hidden">
+                <div id="logsList" class="logs-list"></div>
+              </section>
+            </article>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
