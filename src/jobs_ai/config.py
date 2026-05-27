@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 
+    openai_api_key: Optional[str] = None
     openai_model: str = "gpt-5.2"
     app_database_path: Path = Path("data/jobs_ai.sqlite3")
     app_resume_path: Path = Path("data/resume.md")
