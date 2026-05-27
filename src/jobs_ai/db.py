@@ -5,7 +5,15 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
-from jobs_ai.models import ApplicationStatus, DashboardStats, JobOpening, JobRecord, LogRecord, utc_now
+from jobs_ai.models import (
+    ApplicationStatus,
+    DashboardStats,
+    JobOpening,
+    JobRecord,
+    LogRecord,
+    PlatformConnection,
+    utc_now,
+)
 
 
 class Database:
@@ -60,6 +68,19 @@ class Database:
                     created_at text not null,
                     foreign key (job_id) references jobs(id)
                 );
+
+                create table if not exists platform_connections (
+                    platform text primary key,
+                    display_name text not null,
+                    username text not null default '',
+                    password text not null default '',
+                    search_enabled integer not null default 1,
+                    apply_enabled integer not null default 0,
+                    login_url text not null default '',
+                    status text not null default 'not_configured',
+                    notes text not null default '',
+                    updated_at text not null
+                );
                 """
             )
             self._ensure_column(conn, "jobs", "language", "text not null default 'unknown'")
@@ -67,6 +88,7 @@ class Database:
             self._ensure_column(conn, "jobs", "preference_match", "integer not null default 1")
             self._ensure_column(conn, "jobs", "preference_reason", "text not null default ''")
             self._ensure_column(conn, "jobs", "selected_resume_name", "text not null default ''")
+            self._ensure_platform_defaults(conn)
 
     def upsert_job(self, opening: JobOpening) -> int:
         now = utc_now()
@@ -225,6 +247,61 @@ class Database:
             failed=failed,
         )
 
+    def list_platform_connections(self) -> list[PlatformConnection]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "select * from platform_connections order by display_name"
+            ).fetchall()
+        return [self._platform_from_row(row) for row in rows]
+
+    def get_platform_connection_secret(self, platform: str) -> Optional[dict[str, str]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                "select username, password from platform_connections where platform = ?",
+                (platform,),
+            ).fetchone()
+        if not row:
+            return None
+        return {"username": row["username"], "password": row["password"]}
+
+    def save_platform_connection(
+        self,
+        platform: str,
+        username: str,
+        password: Optional[str],
+        search_enabled: bool,
+        apply_enabled: bool,
+        notes: str = "",
+    ) -> PlatformConnection:
+        now = utc_now()
+        existing = self.get_platform_connection_secret(platform) or {}
+        password_to_store = password if password is not None else existing.get("password", "")
+        status = "configured" if username and password_to_store else "needs_credentials"
+        with self.connect() as conn:
+            conn.execute(
+                """
+                update platform_connections
+                set username = ?, password = ?, search_enabled = ?, apply_enabled = ?,
+                    status = ?, notes = ?, updated_at = ?
+                where platform = ?
+                """,
+                (
+                    username,
+                    password_to_store,
+                    1 if search_enabled else 0,
+                    1 if apply_enabled else 0,
+                    status,
+                    notes,
+                    now,
+                    platform,
+                ),
+            )
+        return next(
+            connection
+            for connection in self.list_platform_connections()
+            if connection.platform == platform
+        )
+
     def _job_from_row(self, row: sqlite3.Row) -> JobRecord:
         data = dict(row)
         data["tags"] = json.loads(data["tags"])
@@ -239,3 +316,50 @@ class Database:
         columns = {row["name"] for row in conn.execute(f"pragma table_info({table})").fetchall()}
         if column not in columns:
             conn.execute(f"alter table {table} add column {column} {definition}")
+
+    def _ensure_platform_defaults(self, conn: sqlite3.Connection) -> None:
+        defaults = [
+            (
+                "infojobs",
+                "InfoJobs",
+                "https://www.infojobs.net/candidate/login",
+                "Spain-focused board. Good fit for Spanish-language applications.",
+            ),
+            (
+                "linkedin",
+                "LinkedIn",
+                "https://www.linkedin.com/login",
+                "Requires browser session, MFA, and careful review for Easy Apply.",
+            ),
+            (
+                "indeed",
+                "Indeed",
+                "https://secure.indeed.com/auth",
+                "Useful for broad search. Some applications redirect to external ATS.",
+            ),
+        ]
+        for platform, display_name, login_url, notes in defaults:
+            conn.execute(
+                """
+                insert into platform_connections (
+                    platform, display_name, login_url, notes, updated_at
+                )
+                values (?, ?, ?, ?, ?)
+                on conflict(platform) do nothing
+                """,
+                (platform, display_name, login_url, notes, utc_now()),
+            )
+
+    def _platform_from_row(self, row: sqlite3.Row) -> PlatformConnection:
+        return PlatformConnection(
+            platform=row["platform"],
+            display_name=row["display_name"],
+            username=row["username"],
+            has_password=bool(row["password"]),
+            search_enabled=bool(row["search_enabled"]),
+            apply_enabled=bool(row["apply_enabled"]),
+            login_url=row["login_url"],
+            status=row["status"],
+            notes=row["notes"],
+            updated_at=row["updated_at"],
+        )

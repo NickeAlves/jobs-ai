@@ -35,6 +35,22 @@ class ResumeRequest(BaseModel):
     content: str
 
 
+class AutoDiscoverRequest(BaseModel):
+    limit: Optional[int] = None
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+class PlatformConnectionRequest(BaseModel):
+    username: str = ""
+    password: Optional[str] = None
+    search_enabled: bool = True
+    apply_enabled: bool = False
+    notes: str = ""
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     db.initialize()
@@ -60,6 +76,7 @@ def dashboard() -> dict:
             "default_location": settings.job_search_location,
             "default_limit": settings.job_search_limit,
         },
+        "platforms": db.list_platform_connections(),
     }
 
 
@@ -74,6 +91,17 @@ def get_job(job_id: int):
 @app.post("/api/jobs/search")
 async def search_jobs(request: SearchRequest) -> dict:
     jobs = await workflow.search_jobs(request.query, request.location, request.limit)
+    return {"jobs": jobs, "stats": db.stats(), "logs": db.list_logs(limit=200)}
+
+
+@app.post("/api/jobs/auto-discover")
+async def auto_discover_jobs(request: AutoDiscoverRequest) -> dict:
+    try:
+        jobs = await workflow.auto_discover_jobs(request.limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"jobs": jobs, "stats": db.stats(), "logs": db.list_logs(limit=200)}
 
 
@@ -125,6 +153,49 @@ def save_resume(request: ResumeRequest) -> dict:
     resume_store.write(request.content)
     db.add_log("info", "resume_saved", "Resume content updated.")
     return get_resume()
+
+
+@app.post("/api/chat")
+def chat(request: ChatRequest) -> dict:
+    try:
+        answer = workflow.chat_with_lucai(request.message)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"agent": "LucAI", "answer": answer, "logs": db.list_logs(limit=200)}
+
+
+@app.get("/api/platforms")
+def list_platforms() -> dict:
+    return {"platforms": db.list_platform_connections()}
+
+
+@app.post("/api/platforms/{platform}")
+def save_platform(platform: str, request: PlatformConnectionRequest) -> dict:
+    known = {connection.platform for connection in db.list_platform_connections()}
+    if platform not in known:
+        raise HTTPException(status_code=404, detail="Platform not found")
+    connection = db.save_platform_connection(
+        platform=platform,
+        username=request.username,
+        password=request.password,
+        search_enabled=request.search_enabled,
+        apply_enabled=request.apply_enabled,
+        notes=request.notes,
+    )
+    db.add_log(
+        "info",
+        "platform_connection_saved",
+        f"{connection.display_name} connection settings updated.",
+        metadata={
+            "platform": connection.platform,
+            "search_enabled": connection.search_enabled,
+            "apply_enabled": connection.apply_enabled,
+            "status": connection.status,
+        },
+    )
+    return {"platform": connection, "platforms": db.list_platform_connections()}
 
 
 def run() -> None:

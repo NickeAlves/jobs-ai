@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import math
 from typing import Optional
 
 from jobs_ai.ai import HeuristicAnalyzer, analyzer_for
@@ -19,6 +19,9 @@ class ApplicationWorkflow:
         self.settings = settings
         self.db = db
         self.resume_store = resume_store
+
+    def _analyzer(self):
+        return analyzer_for(self.settings) if self.settings.openai_api_key else HeuristicAnalyzer()
 
     async def search_jobs(
         self, query: Optional[str] = None, location: Optional[str] = None, limit: Optional[int] = None
@@ -55,6 +58,50 @@ class ApplicationWorkflow:
         )
         return [job for job in self.db.list_jobs() if job.id in ids]
 
+    async def auto_discover_jobs(self, limit: Optional[int] = None) -> list[JobRecord]:
+        resume = self.resume_store.read()
+        if not resume:
+            raise ValueError(
+                "No resume found. Add CV files to "
+                f"{self.settings.app_cv_directory} or {self.settings.app_resume_path} first."
+            )
+        limit = limit or self.settings.job_search_limit
+        profile = self._analyzer().build_candidate_profile(resume)
+        queries = _clean_queries(profile.search_queries) or _clean_queries(
+            [self.settings.job_search_query]
+        )
+        per_query_limit = max(5, math.ceil(limit / max(len(queries), 1)))
+        found: dict[int, JobRecord] = {}
+        for query in queries[:6]:
+            jobs = await self.search_jobs(query=query, location="Spain", limit=per_query_limit)
+            for job in jobs:
+                found[job.id] = job
+            if len(found) >= limit:
+                break
+
+        self.db.add_log(
+            "info",
+            "lucai_auto_discovery_completed",
+            f"LucAI generated {len(queries[:6])} search queries and found {len(found)} matching jobs.",
+            metadata={
+                "profile_summary": profile.summary,
+                "target_titles": profile.target_titles,
+                "core_skills": profile.core_skills,
+                "queries": queries[:6],
+                "configured_platforms": [
+                    {
+                        "platform": connection.platform,
+                        "search_enabled": connection.search_enabled,
+                        "apply_enabled": connection.apply_enabled,
+                        "status": connection.status,
+                    }
+                    for connection in self.db.list_platform_connections()
+                    if connection.search_enabled or connection.apply_enabled
+                ],
+            },
+        )
+        return list(found.values())[:limit]
+
     async def analyze_job(self, job_id: int) -> JobRecord:
         job = self._require_job(job_id)
         resume_document = self.resume_store.select_for_language(job.language)
@@ -63,7 +110,7 @@ class ApplicationWorkflow:
                 "No resume found. Add CV files to "
                 f"{self.settings.app_cv_directory} or {self.settings.app_resume_path} first."
             )
-        analyzer = analyzer_for(self.settings) if os.getenv("OPENAI_API_KEY") else HeuristicAnalyzer()
+        analyzer = self._analyzer()
         try:
             result = analyzer.analyze(resume_document.content, job)
         except Exception as exc:
@@ -136,8 +183,33 @@ class ApplicationWorkflow:
         self.db.add_log("info", "job_skipped", "Job marked as skipped.", job_id=job_id)
         return self._require_job(job_id)
 
+    def chat_with_lucai(self, message: str) -> str:
+        resume = self.resume_store.read()
+        if not resume:
+            raise ValueError(
+                "No resume found. Add CV files to "
+                f"{self.settings.app_cv_directory} or {self.settings.app_resume_path} first."
+            )
+        answer = self._analyzer().chat(resume=resume, jobs=self.db.list_jobs(), message=message)
+        self.db.add_log("info", "lucai_chat", "LucAI answered a chat message.")
+        return answer
+
     def _require_job(self, job_id: int) -> JobRecord:
         job = self.db.get_job(job_id)
         if not job:
             raise ValueError(f"Job {job_id} was not found.")
         return job
+
+
+def _clean_queries(queries: list[str]) -> list[str]:
+    cleaned = []
+    seen = set()
+    for query in queries:
+        value = " ".join(query.split())
+        if len(value) < 3:
+            continue
+        key = value.lower()
+        if key not in seen:
+            cleaned.append(value)
+            seen.add(key)
+    return cleaned

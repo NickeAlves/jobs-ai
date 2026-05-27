@@ -63,6 +63,14 @@ class ApplicationAnswer(BaseModel):
     confidence: str = "medium"
 
 
+class CandidateProfile(BaseModel):
+    summary: str
+    target_titles: list[str] = Field(default_factory=list)
+    core_skills: list[str] = Field(default_factory=list)
+    search_queries: list[str] = Field(default_factory=list)
+    preferred_languages: list[str] = Field(default_factory=list)
+
+
 class AnalysisResult(BaseModel):
     match_score: int = Field(ge=0, le=100)
     match_summary: str
@@ -78,6 +86,19 @@ class ResumeDocument(BaseModel):
     path: str
     language: str = "unknown"
     content: str
+
+
+class PlatformConnection(BaseModel):
+    platform: str
+    display_name: str
+    username: str = ""
+    has_password: bool = False
+    search_enabled: bool = True
+    apply_enabled: bool = False
+    login_url: str = ""
+    status: str = "not_configured"
+    notes: str = ""
+    updated_at: str = Field(default_factory=utc_now)
 
 
 class LogRecord(BaseModel):

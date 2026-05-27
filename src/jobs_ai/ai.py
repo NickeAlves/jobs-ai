@@ -6,7 +6,7 @@ import re
 from openai import OpenAI
 
 from jobs_ai.config import Settings
-from jobs_ai.models import AnalysisResult, ApplicationAnswer, JobRecord
+from jobs_ai.models import AnalysisResult, ApplicationAnswer, CandidateProfile, JobRecord
 
 
 SYSTEM_PROMPT = """
@@ -23,7 +23,7 @@ same language as the job posting unless the job explicitly requests another lang
 class AIAnalyzer:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.client = OpenAI()
+        self.client = OpenAI(api_key=settings.openai_api_key)
 
     def analyze(self, resume: str, job: JobRecord) -> AnalysisResult:
         prompt = f"""
@@ -60,6 +60,61 @@ Tasks:
             text_format=AnalysisResult,
         )
         return response.output_parsed
+
+    def build_candidate_profile(self, resume: str) -> CandidateProfile:
+        prompt = f"""
+Analyze this real CV and infer the strongest job-search strategy.
+
+CV:
+{resume}
+
+Return:
+1. A short professional summary.
+2. Target role titles that fit the CV.
+3. Core skills and technologies.
+4. Search queries for job boards. Include remote Spain and relevant English/Spanish variants.
+5. Preferred application languages inferred from the CV.
+
+Do not invent experience. Prefer focused search queries over generic ones.
+"""
+        response = self.client.responses.parse(
+            model=self.settings.openai_model,
+            input=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            text_format=CandidateProfile,
+        )
+        return response.output_parsed
+
+    def chat(self, resume: str, jobs: list[JobRecord], message: str) -> str:
+        jobs_context = "\n".join(
+            f"- {job.title} at {job.company} ({job.location}, {job.language}, {job.work_mode}) "
+            f"status={job.status} match={job.match_score}: {job.match_summary[:300]}"
+            for job in jobs[:30]
+        )
+        response = self.client.responses.create(
+            model=self.settings.openai_model,
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are LucAI, Nicolas's job-search agent. Be practical, truthful, "
+                        "and direct. Use Portuguese by default unless the user asks otherwise. "
+                        "Never suggest inventing experience."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"CV context:\n{resume[:9000]}\n\n"
+                        f"Known jobs:\n{jobs_context}\n\n"
+                        f"User message:\n{message}"
+                    ),
+                },
+            ],
+        )
+        return response.output_text
 
 
 class HeuristicAnalyzer:
@@ -106,6 +161,33 @@ class HeuristicAnalyzer:
             ],
         )
 
+    def build_candidate_profile(self, resume: str) -> CandidateProfile:
+        keywords = _keywords(resume)
+        important = _top_terms(keywords, limit=18)
+        title_terms = _infer_titles(resume)
+        queries = []
+        for title in title_terms:
+            queries.append(f"{title} remote Spain")
+        if important:
+            queries.append(" ".join(important[:4]) + " remote Spain")
+        return CandidateProfile(
+            summary="Perfil inferido localmente a partir das palavras mais fortes do CV.",
+            target_titles=title_terms,
+            core_skills=important,
+            search_queries=queries[:6],
+            preferred_languages=["es", "en"],
+        )
+
+    def chat(self, resume: str, jobs: list[JobRecord], message: str) -> str:
+        profile = self.build_candidate_profile(resume)
+        job_count = len(jobs)
+        return (
+            "Sou o LucAI. Sem chamar a API agora, consigo te orientar pelo CV carregado. "
+            f"Vejo {job_count} vagas no painel. Os alvos mais prováveis são: "
+            f"{', '.join(profile.target_titles)}. Skills fortes: {', '.join(profile.core_skills[:10])}. "
+            "Para respostas mais personalizadas, confirma que o OPENAI_API_KEY está ativo."
+        )
+
 
 def analyzer_for(settings: Settings):
     try:
@@ -144,3 +226,30 @@ def _keywords(text: str) -> list[str]:
 def _sentences(text: str) -> list[str]:
     parts = re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text).strip())
     return [part[:240] for part in parts if len(part) > 20]
+
+
+def _top_terms(words: list[str], limit: int) -> list[str]:
+    counts = {}
+    for word in words:
+        counts[word] = counts.get(word, 0) + 1
+    return [
+        word
+        for word, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        if len(word) > 3
+    ][:limit]
+
+
+def _infer_titles(resume: str) -> list[str]:
+    text = resume.lower()
+    titles = []
+    if "full stack" in text or ("react" in text and ("backend" in text or "api" in text)):
+        titles.append("full stack developer")
+    if "python" in text or "fastapi" in text or "django" in text:
+        titles.append("python backend developer")
+    if "react" in text or "typescript" in text or "frontend" in text:
+        titles.append("frontend developer react")
+    if "ai" in text or "openai" in text or "llm" in text:
+        titles.append("ai engineer")
+    if not titles:
+        titles.append("software engineer")
+    return titles[:5]
